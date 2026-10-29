@@ -1,1 +1,166 @@
+html
 
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TikTok Web Live Studio</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #fff; padding: 20px; }
+    
+    h1 { margin-bottom: 20px; text-align: center; color: #fe2c55; }
+    
+    .container { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; max-width: 1400px; margin: 0 auto; }
+    
+    .main-studio { background: #1e1e1e; padding: 20px; border-radius: 10px; display: flex; flex-direction: column; gap: 15px; }
+    
+    /* Área de Canvas / Video */
+    .viewport { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; border: 2px solid #333; }
+    canvas { width: 100%; height: 100%; object-fit: contain; }
+
+    /* Caja de Alertas Emergentes sobre el Canvas */
+    .alert-overlay {
+      position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(254, 44, 85, 0.9); padding: 15px 30px; border-radius: 50px;
+      text-align: center; font-weight: bold; font-size: 1.2rem; display: none;
+      box-shadow: 0 0 20px rgba(254, 44, 85, 0.6); animation: popIn 0.5s ease-out;
+    }
+
+    @keyframes popIn {
+      0% { transform: translate(-50%, -20px); opacity: 0; }
+      100% { transform: translate(-50%, 0); opacity: 1; }
+    }
+
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+    input, button { padding: 10px 15px; border-radius: 5px; border: none; font-size: 1rem; }
+    input { background: #2a2a2a; color: #fff; flex-grow: 1; }
+    button { background: #fe2c55; color: #fff; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    button:hover { background: #e02649; }
+    button.secondary { background: #25f4ee; color: #000; }
+
+    /* Lateral: Chat en Vivo */
+    .sidebar { background: #1e1e1e; padding: 20px; border-radius: 10px; display: flex; flex-direction: column; height: 650px; }
+    .chat-box { flex-grow: 1; overflow-y: auto; background: #121212; padding: 10px; border-radius: 8px; margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .chat-msg { background: #2a2a2a; padding: 8px 12px; border-radius: 6px; font-size: 0.9rem; }
+    .chat-msg .author { color: #25f4ee; font-weight: bold; display: block; margin-bottom: 2px; }
+  </style>
+</head>
+<body>
+
+  <h1>TikTok Web Live Studio</h1>
+
+  <div class="container">
+    <!-- Panel Principal del Estudio -->
+    <div class="main-studio">
+      <div class="controls">
+        <input type="text" id="tiktokUser" placeholder="Nombre de usuario de TikTok (ej. @usuario)">
+        <button onclick="connectTikTok()">Conectarse a TikTok</button>
+        <button class="secondary" onclick="startScreenShare()">Compartir Pantalla</button>
+      </div>
+
+      <!-- Lienzo Principal del Stream -->
+      <div class="viewport">
+        <canvas id="studioCanvas" width="1280" height="720"></canvas>
+        <div id="alertOverlay" class="alert-overlay">
+          <div id="alertTitle">¡NUEVO REGALO!</div>
+          <div id="alertUser">Usuario</div>
+          <div id="alertDetails">Detalles de la alerta</div>
+        </div>
+      </div>
+      <p id="statusText" style="color: #aaa; font-size: 0.9rem;">Estado: Desconectado</p>
+    </div>
+
+    <!-- Panel de Chat -->
+    <div class="sidebar">
+      <h3>Chat en Vivo</h3>
+      <div id="chatBox" class="chat-box"></div>
+    </div>
+  </div>
+
+  <!-- Videos Ocultos para Renderizar en Canvas -->
+  <video id="screenVideo" autoplay playsinline style="display: none;"></video>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const canvas = document.getElementById('studioCanvas');
+    const ctx = canvas.getContext('2d');
+    const screenVideo = document.getElementById('screenVideo');
+    const chatBox = document.getElementById('chatBox');
+
+    let screenStreamActive = false;
+
+    // 1. Iniciar Bucle de Renderizado del Estudio (1280x720)
+    function renderStudio() {
+      // Limpiar pantalla
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Si la pantalla compartida está activa, dibújala
+      if (screenStreamActive && screenVideo.readyState === screenVideo.HAVE_ENOUGH_DATA) {
+        ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+      } else {
+        // Pantalla de espera por defecto
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '30px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Haz clic en "Compartir Pantalla" para comenzar el estudio', canvas.width / 2, canvas.height / 2);
+      }
+
+      requestAnimationFrame(renderStudio);
+    }
+    renderStudio();
+
+    // 2. Función para Compartir Pantalla
+    async function startScreenShare() {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        screenVideo.srcObject = stream;
+        screenStreamActive = true;
+      } catch (err) {
+        alert("Error al compartir la pantalla: " + err.message);
+      }
+    }
+
+    // 3. Conectar al Live de TikTok
+    function connectTikTok() {
+      const username = document.getElementById('tiktokUser').value.replace('@', '').trim();
+      if (!username) return alert('Por favor ingresa un usuario válido');
+      
+      document.getElementById('statusText').innerText = "Conectando...";
+      socket.emit('connect-tiktok', username);
+    }
+
+    // Escuchar respuestas de estado
+    socket.on('status', data => {
+      document.getElementById('statusText').innerText = "Estado: " + data.message;
+    });
+
+    // 4. Mostrar Mensajes del Chat
+    socket.on('tiktok-chat', data => {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'chat-msg';
+      msgDiv.innerHTML = `<span class="author">${data.user}:</span> ${data.comment}`;
+      chatBox.appendChild(msgDiv);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    // 5. Manejar Alertas Animadas
+    socket.on('tiktok-alert', data => {
+      const overlay = document.getElementById('alertOverlay');
+      document.getElementById('alertTitle').innerText = data.title;
+      document.getElementById('alertUser').innerText = data.user;
+      document.getElementById('alertDetails').innerText = data.details;
+
+      overlay.style.display = 'block';
+
+      // Ocultar alerta después de 4 segundos
+      setTimeout(() => {
+        overlay.style.display = 'none';
+      }, 4000);
+    });
+  </script>
+</body>
+</html>
