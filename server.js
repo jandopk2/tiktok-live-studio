@@ -1,36 +1,48 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const { Server } = require('socket.io');
 const { WebcastPushConnection } = require('tiktok-live-connector');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
 
-// Servir archivos estáticos de la carpeta 'public'
-app.use(express.static('public'));
+// Configurar Socket.IO con CORS abierto para producción
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+// Servir la carpeta 'public' de manera explícita
+app.use(express.static(path.join(__dirname, 'public')));
 
 let tiktokConnection = null;
 
 io.on('connection', (socket) => {
-  console.log('Estudio conectado vía WebSocket ID:', socket.id);
+  console.log(`[WebSocket] Cliente conectado: ${socket.id}`);
 
-  // Evento para iniciar conexión con un usuario de TikTok
   socket.on('connect-tiktok', (username) => {
     if (tiktokConnection) {
-      tiktokConnection.disconnect();
+      try {
+        tiktokConnection.disconnect();
+      } catch (e) {
+        console.log('Desconectando sesión previa...');
+      }
     }
 
-    // Crear la conexión a la transmisión en vivo pública
     tiktokConnection = new WebcastPushConnection(username);
 
-    tiktokConnection.connect().then(state => {
-      socket.emit('status', { success: true, message: `Conectado al Live de @${username}` });
-    }).catch(err => {
-      socket.emit('status', { success: false, message: `Error de conexión: ${err.message}` });
-    });
+    tiktokConnection.connect()
+      .then(state => {
+        socket.emit('status', { success: true, message: `Conectado exitosamente al Live de @${username}` });
+      })
+      .catch(err => {
+        socket.emit('status', { success: false, message: `Error de conexión: ${err.message}` });
+      });
 
-    // 1. Escuchar Comentarios del Chat
+    // Eventos del Live
     tiktokConnection.on('chat', data => {
       io.emit('tiktok-chat', {
         user: data.nickname,
@@ -40,41 +52,33 @@ io.on('connection', (socket) => {
       });
     });
 
-    // 2. Escuchar Regalos
     tiktokConnection.on('gift', data => {
-      // Filtrar ráfagas de regalos intermedias
       if (data.giftType === 1 && data.repeatEnd === false) return;
-
       io.emit('tiktok-alert', {
         type: 'GIFT',
         title: '¡NUEVO REGALO!',
         user: data.nickname,
-        details: `Envió ${data.repeatCount}x ${data.giftName} 🎁`,
-        diamonds: data.diamondCount * data.repeatCount
+        details: `Envió ${data.repeatCount}x ${data.giftName} 🎁`
       });
     });
 
-    // 3. Escuchar Nuevos Seguidores
     tiktokConnection.on('follow', data => {
       io.emit('tiktok-alert', {
         type: 'FOLLOW',
         title: '¡NUEVO SEGUIDOR!',
         user: data.nickname,
-        details: '¡Se ha unido a la comunidad!'
-      });
-    });
-
-    // 4. Escuchar Me Gusta / Niveles
-    tiktokConnection.on('like', data => {
-      io.emit('tiktok-like', {
-        user: data.nickname,
-        totalLikes: data.totalLikeCount
+        details: '¡Se ha unido a la transmisión!'
       });
     });
   });
+
+  socket.on('disconnect', () => {
+    console.log(`[WebSocket] Cliente desconectado: ${socket.id}`);
+  });
 });
 
-const PORT = 3000;
-server.listen(PORT, () => {
-  console.log(`Servidor Live Studio activo en http://localhost:${PORT}`);
+// Utilizar el puerto del sistema asignado por el servidor en la nube o 3000 para pruebas locales
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Servidor de Live Studio ejecutándose en el puerto ${PORT}`);
 });
